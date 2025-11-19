@@ -81,6 +81,18 @@ def run_training(args):
     model = models.__dict__[args.arch](args.pretrained)
 
     model = torch.nn.DataParallel(model).cuda()
+    # ===== NEWEdit: adjust classifier to 2 classes (real/fake) =====
+    NUM_CLASSES = 2
+    base_model = model.module  # unwrap DataParallel
+    # DRN uses a Conv2d "fc" with out_dim -> num_classes, then avgpoo
+    in_channels = base_model.out_dim  # this is channels[-1]
+
+    base_model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
+    nn.init.kaiming_normal_(base_model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if base_model.fc.bias is not None:
+        nn.init.constant_(base_model.fc.bias, 0.)
+    # ===========================================================
+
 
     best_prec1 = 0
 
@@ -162,6 +174,17 @@ def test_model(args):
     model = models.__dict__[args.arch](args.pretrained)
 
     model = torch.nn.DataParallel(model).cuda()
+    # ===== NEW: adjust classifier to 2 classes (real/fake) =====
+    NUM_CLASSES = 2
+    base_model = model.module  # unwrap DataParallel
+    # DRN uses a Conv2d "fc" with out_dim -> num_classes, then avgpool
+    in_channels = base_model.out_dim  # this is channels[-1]
+    base_model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
+    nn.init.kaiming_normal_(base_model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if base_model.fc.bias is not None:
+        nn.init.constant_(base_model.fc.bias, 0.)
+    # ===========================================================
+
 
     if args.resume:
         if os.path.isfile(args.resume):
