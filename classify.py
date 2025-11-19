@@ -119,7 +119,7 @@ def run_training(args):
 
     train_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(traindir, transforms.Compose([
-            transforms.RandomSizedCrop(224),
+            transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -129,7 +129,7 @@ def run_training(args):
 
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Scale(256),
+            transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
@@ -206,7 +206,7 @@ def test_model(args):
                                      std=[0.229, 0.224, 0.225])
 
     t = transforms.Compose([
-        transforms.Scale(args.scale_size),
+        transforms.Resize(256),,
         transforms.CenterCrop(args.crop_size),
         transforms.ToTensor(),
         normalize])
@@ -235,17 +235,14 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input)
-        target_var = torch.autograd.Variable(target)
+        input = input.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
 
-        # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
+        output = model(input)
+        loss = criterion(output, target)
 
-        # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.data[0], input.size(0))
+        losses.update(loss.item(), input.size(0))
+
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
 
@@ -280,17 +277,15 @@ def validate(args, val_loader, model, criterion):
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True)
-        target_var = torch.autograd.Variable(target, volatile=True)
+        input = input.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
 
-        # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
+        with torch.no_grad():
+            output = model(input)
+            loss = criterion(output, target)
 
-        # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.data[0], input.size(0))
+        losses.update(loss.item(), input.size(0))
+
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
 
