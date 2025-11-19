@@ -100,8 +100,8 @@ def run_training(args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
+    traindir = os.path.join(args.data, 'training')
+    valdir = os.path.join(args.data, 'validation')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -178,7 +178,7 @@ def test_model(args):
     cudnn.benchmark = True
 
     # Data loading code
-    valdir = os.path.join(args.data, 'val')
+    valdir = os.path.join(args.data, 'validation')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
