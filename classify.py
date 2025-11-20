@@ -98,8 +98,7 @@ def run_training(args):
     # ----- NOW move to GPU & DataParallel -----
     model = torch.nn.DataParallel(model).cuda()
 
-
-   
+    best_prec1 = 0.0
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -274,33 +273,28 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=top1))
 
-
 def validate(args, val_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
-    #top5 = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(non_blocking=True)
         input  = input.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
+
         with torch.no_grad():
+            # compute output
             output = model(input)
             loss = criterion(output, target)
 
-        # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
-
         # measure accuracy and record loss
-        prec1, = accuracy(output.data, target, topk=(1,))
+        prec1, = accuracy(output, target, topk=(1,))
         losses.update(loss.item(), input.size(0))
         top1.update(prec1.item(), input.size(0))
-      
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -310,14 +304,14 @@ def validate(args, val_loader, model, criterion):
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'.format(
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                    i, len(val_loader), batch_time=batch_time, loss=losses,
                    top1=top1))
 
-    print(' * Prec@1 {top1.avg:.3f}'
-          .format(top1=top1))
+    print(' * Prec@1 {top1.avg:.3f}'.format(top1=top1))
 
     return top1.avg
+
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
