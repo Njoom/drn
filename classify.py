@@ -77,17 +77,29 @@ def main():
 
 
 def run_training(args):
-    # create model
+    # ----- create base model on CPU -----
     model = models.__dict__[args.arch](args.pretrained)
 
+    # ----- NEW: adjust classifier to 2 classes BEFORE .cuda() -----
+    NUM_CLASSES = 2
+    in_channels = model.out_dim          # DRN defines this as last feature dim
+    model.fc = nn.Conv2d(
+        in_channels,
+        NUM_CLASSES,
+        kernel_size=1,
+        stride=1,
+        padding=0,
+        bias=True
+    )
+    nn.init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if model.fc.bias is not None:
+        nn.init.constant_(model.fc.bias, 0.)
+
+    # ----- NOW move to GPU & DataParallel -----
     model = torch.nn.DataParallel(model).cuda()
 
-    best_prec1 = 0
-    NUM_CLASSES = 2
-    base = model.module
 
-    in_channels = base.out_dim
-    base.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1)
+   
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -163,16 +175,20 @@ def run_training(args):
 
 
 def test_model(args):
-    # create model
+    
+    # base model on CPU
     model = models.__dict__[args.arch](args.pretrained)
 
-    model = torch.nn.DataParallel(model).cuda()
-
+    # adjust classifier to 2 classes
     NUM_CLASSES = 2
-    base = model.module
+    in_channels = model.out_dim
+    model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
+    nn.init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if model.fc.bias is not None:
+        nn.init.constant_(model.fc.bias, 0.)
 
-    in_channels = base.out_dim
-    base.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1)
+    # move to GPU & wrap
+    model = torch.nn.DataParallel(model).cuda()
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -223,8 +239,9 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(non_blocking=True)
+        
         input  = input.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
         
 
         input_var = input
