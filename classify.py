@@ -254,7 +254,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
         prec1,  = accuracy(output.data, target, topk=(1,))
         losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
-        )
+        
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -300,7 +300,7 @@ def validate(args, val_loader, model, criterion):
         prec1, = accuracy(output.data, target, topk=(1,))
         losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
-        )
+      
 
         # measure elapsed time
         batch_time.update(time.time() - end)
