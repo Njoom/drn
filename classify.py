@@ -83,6 +83,11 @@ def run_training(args):
     model = torch.nn.DataParallel(model).cuda()
 
     best_prec1 = 0
+    NUM_CLASSES = 2
+    base = model.module
+
+    in_channels = base.out_dim
+    base.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -100,8 +105,8 @@ def run_training(args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
+    traindir = os.path.join(args.data, 'training')
+    valdir = os.path.join(args.data, 'validation')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -163,6 +168,12 @@ def test_model(args):
 
     model = torch.nn.DataParallel(model).cuda()
 
+    NUM_CLASSES = 2
+    base = model.module
+
+    in_channels = base.out_dim
+    base.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1)
+
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
@@ -178,7 +189,7 @@ def test_model(args):
     cudnn.benchmark = True
 
     # Data loading code
-    valdir = os.path.join(args.data, 'val')
+    valdir = os.path.join(args.data, 'validation')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -212,17 +223,19 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input)
-        target_var = torch.autograd.Variable(target)
+        target = target.cuda(non_blocking=True)
+        input  = input.cuda(non_blocking=True)
+        
 
+        input_var = input
+        target_var = target
         # compute output
         output = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.data[0], input.size(0))
+        losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
 
@@ -258,8 +271,9 @@ def validate(args, val_loader, model, criterion):
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True)
-        target_var = torch.autograd.Variable(target, volatile=True)
+        with torch.no_grad():
+            output = model(input)
+            loss = criterion(output, target)
 
         # compute output
         output = model(input_var)
@@ -267,7 +281,7 @@ def validate(args, val_loader, model, criterion):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.data[0], input.size(0))
+        losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
 
