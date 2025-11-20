@@ -122,7 +122,7 @@ def run_training(args):
 
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Scale(256),
+            transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
@@ -194,7 +194,7 @@ def test_model(args):
                                      std=[0.229, 0.224, 0.225])
 
     t = transforms.Compose([
-        transforms.Scale(args.scale_size),
+        transforms.Resize(args.scale_size),
         transforms.CenterCrop(args.crop_size),
         transforms.ToTensor(),
         normalize])
