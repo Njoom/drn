@@ -123,7 +123,6 @@ def run_training(args):
 
     train_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(traindir, transforms.Compose([
-            transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -133,13 +132,17 @@ def run_training(args):
 
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
         ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
+    #to check:
+    print("Train classes:", train_loader.dataset.classes)
+    print("Train class_to_idx:", train_loader.dataset.class_to_idx)
+    print("Val classes:", val_loader.dataset.classes)
+    print("Val class_to_idx:", val_loader.dataset.class_to_idx)
+
 
     # define loss function (criterion) and pptimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -204,23 +207,21 @@ def test_model(args):
     cudnn.benchmark = True
 
     # Data loading code
-    valdir = os.path.join(args.data, 'testing','crn')
+    testdir = os.path.join(args.data, 'testing','crn')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
     t = transforms.Compose([
-        transforms.Resize(args.scale_size),
-        transforms.CenterCrop(args.crop_size),
         transforms.ToTensor(),
         normalize])
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, t),
+    test_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(testdir, t),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
     criterion = nn.CrossEntropyLoss().cuda()
 
-    validate(args, val_loader, model, criterion)
+    validate(args, test_loader, model, criterion)
 
 
 def train(args, train_loader, model, criterion, optimizer, epoch):
@@ -273,7 +274,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=top1))
 
-def validate(args, val_loader, model, criterion):
+def validate(args, test_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
