@@ -283,7 +283,7 @@ def validate(args, test_loader, model, criterion):
     model.eval()
 
     end = time.time()
-    for i, (input, target) in enumerate(val_loader):
+    for i, (input, target) in enumerate(test_loader):
         input  = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
