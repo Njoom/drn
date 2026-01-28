@@ -219,6 +219,9 @@ def test_model(args):
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
+    print("Test classes:", val_loader.dataset.classes)
+    print("Test class_to_idx:", val_loader.dataset.class_to_idx)
+
     criterion = nn.CrossEntropyLoss().cuda()
 
     validate(args, test_loader, model, criterion)
