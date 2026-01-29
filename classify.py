@@ -75,6 +75,9 @@ def main():
     elif args.cmd == 'test':
         test_model(args)
 
+def count_parameters(model):
+    """Count trainable parameters."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def run_training(args):
     # ----- create base model on CPU -----
@@ -192,6 +195,7 @@ def test_model(args):
     # move to GPU & wrap
     model = torch.nn.DataParallel(model).cuda()
 
+    # Optionally load a checkpoint from --resume (for compatibility)
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
@@ -207,7 +211,7 @@ def test_model(args):
     cudnn.benchmark = True
 
     # Data loading code
-    testdir = os.path.join(args.data, 'testing','crn')
+    testdir = os.path.join(args.data, 'testing', 'crn')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -224,7 +228,38 @@ def test_model(args):
 
     criterion = nn.CrossEntropyLoss().cuda()
 
-    validate(args, test_loader, model, criterion)
+    # ---- NEW: evaluate LAST and BEST checkpoints with full metrics ----
+    num_params = count_parameters(model)
+    results = {}
+
+    def load_and_eval(ckpt_path, tag):
+        if not os.path.isfile(ckpt_path):
+            print(f"[WARN] Checkpoint not found: {ckpt_path}")
+            return
+
+        print(f"\n=== Evaluating {tag} checkpoint: {ckpt_path} ===")
+        checkpoint = torch.load(ckpt_path)
+        model.load_state_dict(checkpoint['state_dict'])
+
+        metrics = eval_loader_with_metrics(
+            test_loader, model, criterion, split_name="TEST"
+        )
+        metrics["params"] = num_params
+        results[tag] = metrics
+
+    # Paths used during training
+    last_ckpt = 'checkpoint_latest.pth.tar'
+    best_ckpt = 'model_best.pth.tar'
+
+    # 1) LAST epoch checkpoint
+    load_and_eval(last_ckpt, tag="LAST")
+
+    # 2) BEST validation checkpoint
+    load_and_eval(best_ckpt, tag="BEST")
+
+    # Print final table
+    print_results_table(results)
+
 
 
 def train(args, train_loader, model, criterion, optimizer, epoch):
@@ -315,6 +350,70 @@ def validate(args, test_loader, model, criterion):
     print(' * Prec@1 {top1.avg:.3f}'.format(top1=top1))
 
     return top1.avg
+def eval_loader_with_metrics(loader, model, criterion, split_name="TEST"):
+    """
+    Evaluate model on a loader and compute:
+    accuracy, sensitivity, specificity, loss, and computation time.
+    Assumes binary classification with labels {0,1}, where:
+    - Positive class = 1 (fake)
+    - Negative class = 0 (real)
+    """
+    model.eval()
+
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    # Confusion matrix components
+    TP = TN = FP = FN = 0
+
+    start_time = time.time()
+
+    with torch.no_grad():
+        for input, target in loader:
+            input  = input.cuda(non_blocking=True)
+            target = target.cuda(non_blocking=True)
+
+            output = model(input)
+            loss = criterion(output, target)
+
+            batch_size = target.size(0)
+            total_loss += loss.item() * batch_size
+
+            _, preds = torch.max(output, 1)
+            total_correct += torch.sum(preds == target).item()
+            total_samples += batch_size
+
+            # Update confusion matrix (binary)
+            for t, p in zip(target.cpu().numpy(), preds.cpu().numpy()):
+                if t == 1 and p == 1:
+                    TP += 1
+                elif t == 0 and p == 0:
+                    TN += 1
+                elif t == 0 and p == 1:
+                    FP += 1
+                elif t == 1 and p == 0:
+                    FN += 1
+
+    elapsed = time.time() - start_time
+
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    accuracy = total_correct / total_samples if total_samples > 0 else 0.0
+    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+    specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
+
+    print(f"{split_name}  Loss: {avg_loss:.4f}  Acc: {accuracy:.4f}")
+    print(f"{split_name}  Sensitivity (TPR): {sensitivity:.4f}")
+    print(f"{split_name}  Specificity (TNR): {specificity:.4f}")
+    print(f"{split_name}  Time: {elapsed:.2f} sec")
+
+    return {
+        "loss": avg_loss,
+        "accuracy": accuracy,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "time": elapsed,
+    }
 
 
 
@@ -364,6 +463,28 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+def print_results_table(results):
+    """
+    Print a copy-friendly table of metrics for different checkpoints.
+    results: dict[tag] = {
+        'accuracy', 'sensitivity', 'specificity', 'loss', 'time', 'params'
+    }
+    """
+    print("\n================ FINAL TEST RESULTS =================")
+    print(f"{'Model':<8} | {'Acc':<8} | {'Sens':<8} | {'Spec':<8} | "
+          f"{'Loss':<8} | {'Time(s)':<8} | {'Params(M)':<10}")
+    print("-" * 90)
+
+    for name, r in results.items():
+        print(
+            f"{name:<8} | "
+            f"{r['accuracy']:.4f} | "
+            f"{r['sensitivity']:.4f} | "
+            f"{r['specificity']:.4f} | "
+            f"{r['loss']:.4f} | "
+            f"{r['time']:.2f} | "
+            f"{r['params'] / 1e6:.2f}"
+        )
 
 
 if __name__ == '__main__':
