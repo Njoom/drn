@@ -83,43 +83,17 @@ def count_parameters(model):
 
 class HFRFWrapper(nn.Module):
     """
-    Wraps a base DRN model and applies your HFRF block
-    on the INPUT IMAGE before DRN:
+    Wraps a base DRN model and applies ONLY the hfreqWH block
+    (high-frequency filtering over spatial dimensions) on the INPUT IMAGE
+    before feeding it to DRN.
 
-    x -> hfreqWH -> Conv+ReLU -> hfreqC -> Conv+ReLU -> base_model(x)
+    x -> hfreqWH -> base_model(x)
     """
 
-    def __init__(self, base_model, scale_wh=4, scale_c=4):
+    def __init__(self, base_model, scale_wh=4):
         super(HFRFWrapper, self).__init__()
         self.base_model = base_model
         self.scale_wh = scale_wh
-        self.scale_c = scale_c
-
-        # Conv after HFRI (hfreqWH)
-        self.conv_wh = nn.Conv2d(
-            in_channels=3,
-            out_channels=3,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            bias=True,
-        )
-        nn.init.kaiming_normal_(self.conv_wh.weight, mode='fan_out', nonlinearity='relu')
-        if self.conv_wh.bias is not None:
-            nn.init.constant_(self.conv_wh.bias, 0.0)
-
-        # Conv after HFRFC (hfreqC)
-        self.conv_c = nn.Conv2d(
-            in_channels=3,
-            out_channels=3,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            bias=True,
-        )
-        nn.init.kaiming_normal_(self.conv_c.weight, mode='fan_out', nonlinearity='relu')
-        if self.conv_c.bias is not None:
-            nn.init.constant_(self.conv_c.bias, 0.0)
 
     # ---------- HFRI: high-frequency over spatial dims (W,H) ----------
     def hfreqWH(self, x, scale: int):
@@ -129,13 +103,13 @@ class HFRFWrapper(nn.Module):
         """
         assert scale > 2, "scale must be > 2"
 
-        # 2D FFT over H,W
+        # 2D FFT over H, W
         x = torch.fft.fft2(x, norm="ortho")
         x = torch.fft.fftshift(x, dim=[-2, -1])
 
         b, c, h, w = x.shape
 
-        # zero out LOW-frequency center block
+        # Zero out LOW-frequency center block
         x[:, :,
           h // 2 - h // scale : h // 2 + h // scale,
           w // 2 - w // scale : w // 2 + w // scale] = 0.0
@@ -147,48 +121,14 @@ class HFRFWrapper(nn.Module):
         x = F.relu(x, inplace=True)
         return x
 
-    # ---------- HFRFC: high-frequency along channel dimension C ----------
-    def hfreqC(self, x, scale: int):
-        """
-        x: (B, C, H, W)
-        High-pass filter in frequency domain along channel axis.
-        """
-        assert scale > 2, "scale must be > 2"
-
-        # 1D FFT along channel dimension
-        x = torch.fft.fft(x, dim=1, norm="ortho")
-        x = torch.fft.fftshift(x, dim=1)
-
-        b, c, h, w = x.shape
-
-        # zero out LOW-frequency center block in channel spectrum
-        x[:, c // 2 - c // scale : c // 2 + c // scale, :, :] = 0.0
-
-        x = torch.fft.ifftshift(x, dim=1)
-        x = torch.fft.ifft(x, dim=1, norm="ortho")
-
-        x = torch.real(x)
-        x = F.relu(x, inplace=True)
-        return x
-
     def forward(self, x):
-        # HFRI (spatial)
+        # Apply high-frequency spatial filter once in the forward pass
         x = self.hfreqWH(x, self.scale_wh)
 
-        # Conv + ReLU after HFRI
-        x = self.conv_wh(x)
-        x = F.relu(x, inplace=True)
-
-        # HFRFC (channels)
-        x = self.hfreqC(x, self.scale_c)
-
-        # Conv + ReLU after HFRFC
-        x = self.conv_c(x)
-        x = F.relu(x, inplace=True)
-
-        # Then feed to original DRN
+        # Then feed to the original DRN model
         x = self.base_model(x)
         return x
+
 
 
 
@@ -216,12 +156,13 @@ def run_training(args):
     if base_model.fc.bias is not None:
         nn.init.constant_(base_model.fc.bias, 0.)
 
-    # ----- Wrap with HFRF block -----
-    # This will apply your FFT-based high-frequency block on the input image
-    model = HFRFWrapper(base_model, scale_wh=4, scale_c=4)
+    # ----- Wrap with hfreqWH-only block -----
+    # This applies HFRI (spatial high-frequency) to the input image
+    model = HFRFWrapper(base_model, scale_wh=4)
 
     # ----- NOW move to GPU & DataParallel -----
     model = torch.nn.DataParallel(model).cuda()
+    ...
 
     best_prec1 = 0.0
 
@@ -309,16 +250,25 @@ def test_model(args):
     # adjust classifier to 2 classes
     NUM_CLASSES = 2
     in_channels = base_model.out_dim
-    base_model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
+    base_model.fc = nn.Conv2d(
+        in_channels,
+        NUM_CLASSES,
+        kernel_size=1,
+        stride=1,
+        padding=0,
+        bias=True
+    )
     nn.init.kaiming_normal_(base_model.fc.weight, mode='fan_out', nonlinearity='relu')
     if base_model.fc.bias is not None:
         nn.init.constant_(base_model.fc.bias, 0.)
 
-    # wrap with HFRF block
-    model = HFRFWrapper(base_model, scale_wh=4, scale_c=4)
+    # wrap with hfreqWH-only block
+    model = HFRFWrapper(base_model, scale_wh=4)
 
     # move to GPU & wrap
     model = torch.nn.DataParallel(model).cuda()
+    ...
+
 
 
     # Optionally load a checkpoint from --resume (for compatibility)
