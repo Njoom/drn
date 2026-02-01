@@ -16,6 +16,8 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+import torch.nn.functional as F
+
 import drn as models
 
 model_names = sorted(name for name in models.__dict__
@@ -79,14 +81,117 @@ def count_parameters(model):
     """Count trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def run_training(args):
-    # ----- create base model on CPU -----
-    model = models.__dict__[args.arch](args.pretrained)
 
-    # ----- NEW: adjust classifier to 2 classes BEFORE .cuda() -----
+
+class HFRFWrapper(nn.Module):
+    """
+    Wraps a base DRN model and applies your HFRF block
+    (HFRI + conv + HFRFC) on the INPUT IMAGE before DRN.
+
+    Input:  x (B, 3, H, W)  # normalized image from DataLoader
+    Output: base_model(x_hfrf)
+    """
+
+    def __init__(self, base_model, scale_wh=4, scale_c=4):
+        super(HFRFWrapper, self).__init__()
+        self.base_model = base_model
+        self.scale_wh = scale_wh
+        self.scale_c = scale_c
+
+        # Small conv layer that corresponds to:
+        # "Apply a convolution layer on the output of (HFRI) block"
+        # We keep 3->3 so DRN still gets 3-channel input.
+        self.pre_conv = nn.Conv2d(
+            in_channels=3,
+            out_channels=3,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True,
+        )
+        nn.init.kaiming_normal_(self.pre_conv.weight, mode='fan_out', nonlinearity='relu')
+        if self.pre_conv.bias is not None:
+            nn.init.constant_(self.pre_conv.bias, 0.0)
+
+    # ---------- HFRI: high-frequency over spatial dims (W,H) ----------
+    def hfreqWH(self, x, scale: int):
+        """
+        x: (B, C, H, W)
+        High-pass filter in spatial frequency domain.
+        """
+        assert scale > 2, "scale must be > 2"
+
+        # 2D FFT over H,W
+        x = torch.fft.fft2(x, norm="ortho")
+        x = torch.fft.fftshift(x, dim=[-2, -1])
+
+        b, c, h, w = x.shape
+
+        # zero out LOW-frequency center block
+        x[:, :,
+          h // 2 - h // scale : h // 2 + h // scale,
+          w // 2 - w // scale : w // 2 + w // scale] = 0.0
+
+        x = torch.fft.ifftshift(x, dim=[-2, -1])
+        x = torch.fft.ifft2(x, norm="ortho")
+
+        x = torch.real(x)
+        x = F.relu(x, inplace=True)
+        return x
+
+    # ---------- HFRFC: high-frequency along channel dimension C ----------
+    def hfreqC(self, x, scale: int):
+        """
+        x: (B, C, H, W)
+        High-pass filter in frequency domain along channel axis.
+        """
+        assert scale > 2, "scale must be > 2"
+
+        # 1D FFT along channel dimension
+        x = torch.fft.fft(x, dim=1, norm="ortho")
+        x = torch.fft.fftshift(x, dim=1)
+
+        b, c, h, w = x.shape
+
+        # zero out LOW-frequency center block in channel spectrum
+        x[:, c // 2 - c // scale : c // 2 + c // scale, :, :] = 0.0
+
+        x = torch.fft.ifftshift(x, dim=1)
+        x = torch.fft.ifft(x, dim=1, norm="ortho")
+
+        x = torch.real(x)
+        x = F.relu(x, inplace=True)
+        return x
+
+    def forward(self, x):
+        # Just to debug shapes like in your snippet:
+        print(f'output shape of input image: {x.shape}')
+
+        # === HFRI on the raw image ===
+        x = self.hfreqWH(x, self.scale_wh)
+
+        # === Conv layer on HFRI output ===
+        # equivalent to your: F.conv2d(x, self.weight1, self.bias1, ...)
+        x = self.pre_conv(x)
+        x = F.relu(x, inplace=True)
+
+        # === HFRFC on the conv feature map ===
+        x = self.hfreqC(x, self.scale_c)
+
+        # === Now pass to the original DRN model ===
+        x = self.base_model(x)
+        return x
+
+
+
+def run_training(args):
+    # ----- create base model on CPU ----- 
+    base_model = models.__dict__[args.arch](args.pretrained)
+
+    # ----- adjust classifier to 2 classes BEFORE wrapping ----- 
     NUM_CLASSES = 2
-    in_channels = model.out_dim          # DRN defines this as last feature dim
-    model.fc = nn.Conv2d(
+    in_channels = base_model.out_dim          # DRN defines this as last feature dim
+    base_model.fc = nn.Conv2d(
         in_channels,
         NUM_CLASSES,
         kernel_size=1,
@@ -94,9 +199,13 @@ def run_training(args):
         padding=0,
         bias=True
     )
-    nn.init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
-    if model.fc.bias is not None:
-        nn.init.constant_(model.fc.bias, 0.)
+    nn.init.kaiming_normal_(base_model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if base_model.fc.bias is not None:
+        nn.init.constant_(base_model.fc.bias, 0.)
+
+    # ----- Wrap with HFRF block -----
+    # This will apply your FFT-based high-frequency block on the input image
+    model = HFRFWrapper(base_model, scale_wh=4, scale_c=4)
 
     # ----- NOW move to GPU & DataParallel -----
     model = torch.nn.DataParallel(model).cuda()
@@ -182,18 +291,22 @@ def run_training(args):
 def test_model(args):
     
     # base model on CPU
-    model = models.__dict__[args.arch](args.pretrained)
+    base_model = models.__dict__[args.arch](args.pretrained)
 
     # adjust classifier to 2 classes
     NUM_CLASSES = 2
-    in_channels = model.out_dim
-    model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
-    nn.init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
-    if model.fc.bias is not None:
-        nn.init.constant_(model.fc.bias, 0.)
+    in_channels = base_model.out_dim
+    base_model.fc = nn.Conv2d(in_channels, NUM_CLASSES, kernel_size=1, stride=1, padding=0, bias=True)
+    nn.init.kaiming_normal_(base_model.fc.weight, mode='fan_out', nonlinearity='relu')
+    if base_model.fc.bias is not None:
+        nn.init.constant_(base_model.fc.bias, 0.)
+
+    # wrap with HFRF block
+    model = HFRFWrapper(base_model, scale_wh=4, scale_c=4)
 
     # move to GPU & wrap
     model = torch.nn.DataParallel(model).cuda()
+
 
     # Optionally load a checkpoint from --resume (for compatibility)
     if args.resume:
