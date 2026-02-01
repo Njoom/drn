@@ -81,15 +81,12 @@ def count_parameters(model):
     """Count trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-
-
 class HFRFWrapper(nn.Module):
     """
     Wraps a base DRN model and applies your HFRF block
-    (HFRI + conv + HFRFC) on the INPUT IMAGE before DRN.
+    on the INPUT IMAGE before DRN:
 
-    Input:  x (B, 3, H, W)  # normalized image from DataLoader
-    Output: base_model(x_hfrf)
+    x -> hfreqWH -> Conv+ReLU -> hfreqC -> Conv+ReLU -> base_model(x)
     """
 
     def __init__(self, base_model, scale_wh=4, scale_c=4):
@@ -98,10 +95,8 @@ class HFRFWrapper(nn.Module):
         self.scale_wh = scale_wh
         self.scale_c = scale_c
 
-        # Small conv layer that corresponds to:
-        # "Apply a convolution layer on the output of (HFRI) block"
-        # We keep 3->3 so DRN still gets 3-channel input.
-        self.pre_conv = nn.Conv2d(
+        # Conv after HFRI (hfreqWH)
+        self.conv_wh = nn.Conv2d(
             in_channels=3,
             out_channels=3,
             kernel_size=3,
@@ -109,9 +104,22 @@ class HFRFWrapper(nn.Module):
             padding=1,
             bias=True,
         )
-        nn.init.kaiming_normal_(self.pre_conv.weight, mode='fan_out', nonlinearity='relu')
-        if self.pre_conv.bias is not None:
-            nn.init.constant_(self.pre_conv.bias, 0.0)
+        nn.init.kaiming_normal_(self.conv_wh.weight, mode='fan_out', nonlinearity='relu')
+        if self.conv_wh.bias is not None:
+            nn.init.constant_(self.conv_wh.bias, 0.0)
+
+        # Conv after HFRFC (hfreqC)
+        self.conv_c = nn.Conv2d(
+            in_channels=3,
+            out_channels=3,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True,
+        )
+        nn.init.kaiming_normal_(self.conv_c.weight, mode='fan_out', nonlinearity='relu')
+        if self.conv_c.bias is not None:
+            nn.init.constant_(self.conv_c.bias, 0.0)
 
     # ---------- HFRI: high-frequency over spatial dims (W,H) ----------
     def hfreqWH(self, x, scale: int):
@@ -164,25 +172,30 @@ class HFRFWrapper(nn.Module):
         return x
 
     def forward(self, x):
-        # Just to debug shapes like in your snippet:
-        print(f'output shape of input image: {x.shape}')
-
-        # === HFRI on the raw image ===
+        # HFRI (spatial)
         x = self.hfreqWH(x, self.scale_wh)
 
-        # === Conv layer on HFRI output ===
-        # equivalent to your: F.conv2d(x, self.weight1, self.bias1, ...)
-        x = self.pre_conv(x)
+        # Conv + ReLU after HFRI
+        x = self.conv_wh(x)
         x = F.relu(x, inplace=True)
 
-        # === HFRFC on the conv feature map ===
+        # HFRFC (channels)
         x = self.hfreqC(x, self.scale_c)
 
-        # === Now pass to the original DRN model ===
+        # Conv + ReLU after HFRFC
+        x = self.conv_c(x)
+        x = F.relu(x, inplace=True)
+
+        # Then feed to original DRN
         x = self.base_model(x)
         return x
 
 
+
+
+
+
+    
 
 def run_training(args):
     # ----- create base model on CPU ----- 
