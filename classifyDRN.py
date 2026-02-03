@@ -88,45 +88,52 @@ def count_parameters(model):
 # ==========================
 def prepare_data_root(data_path):
     """
-    إذا كان data_path مجلد: يرجّعه كما هو.
-    إذا كان data_path ملف .zip:
-      - نفكّه في مجلد بنفس اسم الملف بدون .zip
-        مثال:
-          /content/drive/MyDrive/Wang_CVPR2020.zip
-        يُفكّ إلى:
-          /content/drive/MyDrive/Wang_CVPR2020/
-      - نتوقّع أن داخل هذا المجلد يوجد:
-          training/
-          validation/
-          testing/
+    If data_path is a directory: return it as-is.
+    If data_path is a .zip file (e.g. /content/drive/MyDrive/Wang_CVPR2020.zip):
+      - Extract it into /content
+      - Expect a folder /content/Wang_CVPR2020/ containing:
+            training/
+            validation/
+            testing/
+      - Return that folder as data_root.
+    This keeps all heavy I/O on Colab local disk, not on Drive.
     """
-    # الحالة 1: data_path أصلاً مجلد
+    # Case 1: already a directory
     if os.path.isdir(data_path):
         print(f"[INFO] Using existing directory as data root: {data_path}")
         return data_path
 
-    # الحالة 2: ملف ZIP
-    if os.path.isfile(data_path) and data_path.lower().endswith('.zip'):
-        base_dir = os.path.dirname(os.path.abspath(data_path))
-        zip_base = os.path.splitext(os.path.basename(data_path))[0]
+    # Case 2: ZIP file (your Wang_CVPR2020.zip case)
+    if os.path.isfile(data_path) and data_path.lower().endswith(".zip"):
+        zip_abs = os.path.abspath(data_path)
+        zip_base = os.path.splitext(os.path.basename(zip_abs))[0]  # e.g. "Wang_CVPR2020"
 
-        # نفك الضغط في مجلد بنفس اسم الملف
-        extract_root = os.path.join(base_dir, zip_base)
+        # We always extract into /content
+        extract_root = "/content"
+        target_dir = os.path.join(extract_root, zip_base)  # /content/Wang_CVPR2020
 
-        if not os.path.isdir(extract_root) or len(os.listdir(extract_root)) == 0:
-            print(f"[INFO] Extracting ZIP dataset from: {data_path}")
-            os.makedirs(extract_root, exist_ok=True)
-            with zipfile.ZipFile(data_path, 'r') as zf:
+        # If target_dir doesn't exist or is empty -> extract
+        if not os.path.isdir(target_dir) or len(os.listdir(target_dir)) == 0:
+            print(f"[INFO] Extracting ZIP dataset from: {zip_abs}")
+            with zipfile.ZipFile(zip_abs, "r") as zf:
                 zf.extractall(extract_root)
             print(f"[INFO] Extraction done under: {extract_root}")
         else:
-            print(f"[INFO] Using already extracted data under: {extract_root}")
+            print(f"[INFO] Using already extracted data under: {target_dir}")
 
-        # هنا نتوقّع أن داخل extract_root يوجد training/ و validation/ و testing/
-        return extract_root
+        # Now we expect: /content/Wang_CVPR2020/training, /validation, /testing
+        if os.path.isdir(os.path.join(target_dir, "training")):
+            print(f"[INFO] Using data root: {target_dir}")
+            return target_dir
+        else:
+            # Fallback (rare): training not inside /content/Wang_CVPR2020
+            print(f"[WARN] 'training' folder not found inside {target_dir}. "
+                  f"Using {extract_root} as data root.")
+            return extract_root
 
-    # غير مجلد ولا ZIP
+    # Not a folder and not a ZIP
     raise ValueError(f"Data path '{data_path}' is neither a directory nor a .zip file.")
+
 
 
 # ==========================
