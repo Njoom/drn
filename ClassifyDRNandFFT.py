@@ -379,7 +379,7 @@ def test_model(args):
     cudnn.benchmark = True
 
    
-     data_root = prepare_data_root(args.data)
+    data_root = prepare_data_root(args.data)
 
     # Data loading code
     # NOTE: your testing path: data_root/testing/crn
