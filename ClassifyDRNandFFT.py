@@ -15,6 +15,7 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import zipfile
 
 import drn as models
 
@@ -130,6 +131,7 @@ def prepare_data_root(data_path):
 
     # Not a folder and not a ZIP
     raise ValueError(f"Data path '{data_path}' is neither a directory nor a .zip file.")
+
 
 class ButterworthHighpass2D(nn.Module):
     """
@@ -274,12 +276,18 @@ def run_training(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
+    # ------------------------------
+    # Data root: handle ZIP or folder
+    # ------------------------------
+    data_root = prepare_data_root(args.data)
 
     # Data loading code
-    traindir = os.path.join(args.data, 'training')
-    valdir = os.path.join(args.data, 'validation')
+    traindir = os.path.join(data_root, 'training')
+    valdir = os.path.join(data_root, 'validation')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
+
+
 
     train_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(traindir, transforms.Compose([
@@ -370,11 +378,18 @@ def test_model(args):
 
     cudnn.benchmark = True
 
+   
+     data_root = prepare_data_root(args.data)
+
     # Data loading code
-    # NOTE: your testing path: data/testing/crn
-    testdir = os.path.join(args.data, 'testing', 'crn')
+    # NOTE: your testing path: data_root/testing/crn
+    testdir = os.path.join(data_root, 'testing', 'crn')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
+
+    
+    
+    
 
     t = transforms.Compose([
         transforms.ToTensor(),
