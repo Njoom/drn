@@ -141,7 +141,7 @@ class ButterworthHighpass2D(nn.Module):
     Output: same shape (B, C, H, W)
     """
 
-    def __init__(self, D0=30.0, n=2):
+    def __init__(self, D0=60.0, n=2):
         super(ButterworthHighpass2D, self).__init__()
         self.D0 = float(D0)
         self.n = int(n)
