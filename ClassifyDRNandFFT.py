@@ -196,7 +196,7 @@ class DRNWithButterworth(nn.Module):
       x_rgb -> HPF(x_rgb) -> cat([x_rgb, HPF(x_rgb)], dim=1) -> Conv(6->3)+ReLU -> DRN
     """
 
-    def __init__(self, base_model, D0=30.0, n=2):
+    def __init__(self, base_model, D0=60.0, n=2):
         super(DRNWithButterworth, self).__init__()
         self.base_model = base_model
         self.hpf = ButterworthHighpass2D(D0=D0, n=n)
