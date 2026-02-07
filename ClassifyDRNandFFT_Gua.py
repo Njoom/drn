@@ -149,7 +149,7 @@ class GaussianHighPass2D(nn.Module):
         y : (B, C, H, W)  tensor
     """
 
-    def __init__(self, D0=30.0):
+    def __init__(self, D0=30.0, n=2):
         """
         Parameters
         ----------
